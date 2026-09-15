@@ -19,7 +19,9 @@ describe('Tasks', () => {
   let connection: Connection;
 
   let owner: TestUser;
+  let projectManager: TestUser;
   let member: TestUser;
+  let assignee: TestUser;
   let outsider: TestUser;
   let organizationId: string;
   let projectId: string;
@@ -36,7 +38,9 @@ describe('Tasks', () => {
     await resetDatabase(connection);
 
     owner = await registerUser(app, 'Ammar Yaser', 'ammar@example.com');
+    projectManager = await registerUser(app, 'Ahmed Hassan', 'ahmed@example.com');
     member = await registerUser(app, 'Magd Ali', 'magd@example.com');
+    assignee = await registerUser(app, 'Nour Salem', 'nour@example.com');
     outsider = await registerUser(app, 'Outside User', 'outside@example.com');
 
     organizationId = await createOrganization(
@@ -46,7 +50,14 @@ describe('Tasks', () => {
       owner.id,
     );
     await addOrganizationMember(connection, organizationId, owner.id, OrganizationRole.OWNER);
+    await addOrganizationMember(
+      connection,
+      organizationId,
+      projectManager.id,
+      OrganizationRole.MEMBER,
+    );
     await addOrganizationMember(connection, organizationId, member.id, OrganizationRole.MEMBER);
+    await addOrganizationMember(connection, organizationId, assignee.id, OrganizationRole.MEMBER);
 
     projectId = await createProject(
       connection,
@@ -55,7 +66,9 @@ describe('Tasks', () => {
       'ENG',
       owner.id,
     );
+    await addProjectMember(connection, projectId, projectManager.id, ProjectRole.PROJECT_MANAGER);
     await addProjectMember(connection, projectId, member.id, ProjectRole.MEMBER);
+    await addProjectMember(connection, projectId, assignee.id, ProjectRole.MEMBER);
   });
 
   it('lets a project member create a task', async () => {
@@ -348,6 +361,274 @@ describe('Tasks', () => {
       status: TaskStatus.IN_PROGRESS,
       key: 'ENG-1',
     });
+  });
+
+  it('lets a project member assign themselves to a task', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Self-assigned task',
+      owner.id,
+    );
+
+    const response = await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(member))
+      .send({ assigneeId: member.id })
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      id: taskId,
+      createdBy: { email: owner.email },
+      assignee: { id: member.id, email: member.email },
+    });
+
+    const task = await connection.collection('tasks').findOne({
+      _id: new connection.base.Types.ObjectId(taskId),
+    });
+    expect(task?.assigneeId?.toString()).toBe(member.id);
+  });
+
+  it('lets an organization owner assign another project member to a task', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Owner-assigned task',
+      member.id,
+    );
+
+    const response = await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(owner))
+      .send({ assigneeId: assignee.id })
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      id: taskId,
+      createdBy: { email: member.email },
+      assignee: { id: assignee.id, email: assignee.email },
+    });
+
+    const task = await connection.collection('tasks').findOne({
+      _id: new connection.base.Types.ObjectId(taskId),
+    });
+    expect(task?.assigneeId?.toString()).toBe(assignee.id);
+  });
+
+  it('lets a project manager assign another project member to a task', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Project-manager-assigned task',
+      member.id,
+    );
+
+    const response = await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(projectManager))
+      .send({ assigneeId: assignee.id })
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      id: taskId,
+      assignee: { id: assignee.id, email: assignee.email },
+    });
+
+    const task = await connection.collection('tasks').findOne({
+      _id: new connection.base.Types.ObjectId(taskId),
+    });
+    expect(task?.assigneeId?.toString()).toBe(assignee.id);
+  });
+
+  it('refuses to let a regular project member assign another user', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Protected assignment task',
+      member.id,
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(member))
+      .send({ assigneeId: assignee.id })
+      .expect(403);
+
+    const task = await connection.collection('tasks').findOne({
+      _id: new connection.base.Types.ObjectId(taskId),
+    });
+    expect(task?.assigneeId).toBeUndefined();
+  });
+
+  it('refuses to assign a user outside the project', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Invalid assignee task',
+      member.id,
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(owner))
+      .send({ assigneeId: outsider.id })
+      .expect(400);
+
+    const task = await connection.collection('tasks').findOne({
+      _id: new connection.base.Types.ObjectId(taskId),
+    });
+    expect(task?.assigneeId).toBeUndefined();
+  });
+
+  it('rejects a malformed assignee id', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Malformed assignee task',
+      member.id,
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(owner))
+      .send({ assigneeId: 'not-an-object-id' })
+      .expect(400);
+
+    const task = await connection.collection('tasks').findOne({
+      _id: new connection.base.Types.ObjectId(taskId),
+    });
+    expect(task?.assigneeId).toBeUndefined();
+  });
+
+  it('lets an organization owner unassign the current assignee', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Assigned task to clear',
+      member.id,
+    );
+    await connection.collection('tasks').updateOne(
+      { _id: new connection.base.Types.ObjectId(taskId) },
+      { $set: { assigneeId: new connection.base.Types.ObjectId(assignee.id) } },
+    );
+
+    const response = await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(owner))
+      .send({ assigneeId: null })
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      id: taskId,
+      assignee: null,
+    });
+
+    const task = await connection.collection('tasks').findOne({
+      _id: new connection.base.Types.ObjectId(taskId),
+    });
+    expect(task?.assigneeId).toBeNull();
+  });
+
+  it('lets a project manager unassign the current assignee', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Assigned task for project manager to clear',
+      member.id,
+    );
+    await connection.collection('tasks').updateOne(
+      { _id: new connection.base.Types.ObjectId(taskId) },
+      { $set: { assigneeId: new connection.base.Types.ObjectId(assignee.id) } },
+    );
+
+    const response = await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(projectManager))
+      .send({ assigneeId: null })
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      id: taskId,
+      assignee: null,
+    });
+
+    const task = await connection.collection('tasks').findOne({
+      _id: new connection.base.Types.ObjectId(taskId),
+    });
+    expect(task?.assigneeId).toBeNull();
+  });
+
+  it('returns the deleted-user placeholder when an assigned user cannot be resolved', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Task with missing assignee user',
+      member.id,
+    );
+    const missingUserId = new connection.base.Types.ObjectId();
+    await connection.collection('tasks').updateOne(
+      { _id: new connection.base.Types.ObjectId(taskId) },
+      { $set: { assigneeId: missingUserId } },
+    );
+
+    const response = await request(app.getHttpServer())
+      .get(`/tasks/${taskId}`)
+      .set('Authorization', authHeader(member))
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      id: taskId,
+      assignee: {
+        id: '',
+        name: 'Unknown user',
+        email: '',
+        avatarUrl: null,
+      },
+    });
+  });
+
+  it('refuses to let a regular project member unassign a task', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Assigned task protected from member unassign',
+      member.id,
+    );
+    await connection.collection('tasks').updateOne(
+      { _id: new connection.base.Types.ObjectId(taskId) },
+      { $set: { assigneeId: new connection.base.Types.ObjectId(assignee.id) } },
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(member))
+      .send({ assigneeId: null })
+      .expect(403);
+
+    const task = await connection.collection('tasks').findOne({
+      _id: new connection.base.Types.ObjectId(taskId),
+    });
+    expect(task?.assigneeId?.toString()).toBe(assignee.id);
   });
 
   it('rejects a task without a usable title', async () => {

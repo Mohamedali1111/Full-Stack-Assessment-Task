@@ -1,14 +1,16 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { type FilterQuery, Model, Types } from 'mongoose';
 import type { Paginated, TaskDetail, TaskSummary } from '@projectflow/shared';
 import { toUserSummary } from '../common/utils/serialize';
 import { Comment, type CommentDocument } from '../comments/schemas/comment.schema';
+import { ProjectMembersService } from '../project-members/project-members.service';
 import { canManage, ProjectAccessService } from '../projects/project-access.service';
 import { Project, type ProjectDocument } from '../projects/schemas/project.schema';
 import { UsersService } from '../users/users.service';
 import type { CreateTaskDto } from './dto/create-task.dto';
 import type { ListTasksQueryDto } from './dto/list-tasks.dto';
+import type { UpdateTaskAssigneeDto } from './dto/update-task-assignee.dto';
 import type { UpdateTaskDto } from './dto/update-task.dto';
 import type { UpdateTaskStatusDto } from './dto/update-task-status.dto';
 import { Task, type TaskDocument } from './schemas/task.schema';
@@ -20,6 +22,7 @@ export class TasksService {
     @InjectModel(Project.name) private readonly projectModel: Model<ProjectDocument>,
     @InjectModel(Comment.name) private readonly commentModel: Model<CommentDocument>,
     private readonly projectAccessService: ProjectAccessService,
+    private readonly projectMembersService: ProjectMembersService,
     private readonly usersService: UsersService,
   ) {}
 
@@ -126,6 +129,40 @@ export class TasksService {
     return this.toDetail(task, project);
   }
 
+  async updateAssignee(
+    taskId: Types.ObjectId,
+    userId: Types.ObjectId,
+    dto: UpdateTaskAssigneeDto,
+  ): Promise<TaskDetail> {
+    const task = await this.findTaskOrFail(taskId);
+    const access = await this.projectAccessService.assertCanView(task.projectId, userId);
+
+    if (dto.assigneeId === null) {
+      if (!canManage(access)) {
+        throw new ForbiddenException('You do not have permission to unassign this task');
+      }
+      task.assigneeId = null;
+      await task.save();
+      return this.toDetail(task, access.project);
+    }
+
+    const assigneeId = new Types.ObjectId(dto.assigneeId);
+    const assigneeRole = await this.projectMembersService.findRole(task.projectId, assigneeId);
+    if (!assigneeRole) {
+      throw new BadRequestException('Assignee must be a member of this project');
+    }
+
+    const isSelfAssignment = assigneeId.equals(userId);
+    if (!canManage(access) && !isSelfAssignment) {
+      throw new ForbiddenException('You do not have permission to assign this task');
+    }
+
+    task.assigneeId = assigneeId;
+    await task.save();
+
+    return this.toDetail(task, access.project);
+  }
+
   async remove(taskId: Types.ObjectId, userId: Types.ObjectId): Promise<void> {
     const task = await this.findTaskOrFail(taskId);
     await this.projectAccessService.assertCanManage(task.projectId, userId);
@@ -198,8 +235,10 @@ export class TasksService {
       return [];
     }
 
-    const [creators, commentRows] = await Promise.all([
-      this.usersService.findManyByIds(tasks.map((task) => task.createdBy)),
+    const assigneeIds = tasks.flatMap((task) => (task.assigneeId ? [task.assigneeId] : []));
+
+    const [users, commentRows] = await Promise.all([
+      this.usersService.findManyByIds([...tasks.map((task) => task.createdBy), ...assigneeIds]),
       this.commentModel
         .aggregate<{
           _id: Types.ObjectId;
@@ -211,7 +250,7 @@ export class TasksService {
         .exec(),
     ]);
 
-    const creatorsById = new Map(creators.map((user) => [user._id.toString(), user]));
+    const usersById = new Map(users.map((user) => [user._id.toString(), user]));
     const commentCounts = new Map(commentRows.map((row) => [row._id.toString(), row.count]));
 
     return tasks.map((task) => ({
@@ -223,7 +262,10 @@ export class TasksService {
       status: task.status,
       priority: task.priority,
       commentCount: commentCounts.get(task._id.toString()) ?? 0,
-      createdBy: toCreatorSummary(creatorsById.get(task.createdBy.toString())),
+      createdBy: toCreatorSummary(usersById.get(task.createdBy.toString())),
+      assignee: task.assigneeId
+        ? toAssigneeSummary(usersById.get(task.assigneeId.toString()))
+        : null,
       createdAt: task.createdAt.toISOString(),
       updatedAt: task.updatedAt.toISOString(),
     }));
@@ -257,5 +299,9 @@ const DELETED_USER = {
 };
 
 function toCreatorSummary(user: Parameters<typeof toUserSummary>[0] | undefined) {
+  return user ? toUserSummary(user) : DELETED_USER;
+}
+
+function toAssigneeSummary(user: Parameters<typeof toUserSummary>[0] | undefined) {
   return user ? toUserSummary(user) : DELETED_USER;
 }
