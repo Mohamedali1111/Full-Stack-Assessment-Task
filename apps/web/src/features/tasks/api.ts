@@ -14,6 +14,10 @@ export interface CreateTaskPayload {
   status: TaskStatus;
 }
 
+export interface UpdateTaskAssigneePayload {
+  assigneeId: string | null;
+}
+
 /** The board renders every column at once, so tasks are fetched in one page. */
 const BOARD_PAGE_SIZE = 100;
 
@@ -38,6 +42,16 @@ export function updateTaskStatus(taskId: string, status: TaskStatus): Promise<Ta
   return apiRequest<TaskDetail>(`/tasks/${taskId}/status`, {
     method: 'PATCH',
     body: { status },
+  });
+}
+
+export function updateTaskAssignee(
+  taskId: string,
+  payload: UpdateTaskAssigneePayload,
+): Promise<TaskDetail> {
+  return apiRequest<TaskDetail>(`/tasks/${taskId}/assignee`, {
+    method: 'PATCH',
+    body: payload,
   });
 }
 

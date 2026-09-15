@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { CommentList } from '@/features/comments/components/comment-list';
 import { formatDate } from '@/lib/format';
 import { useTask } from '../hooks';
+import { TaskAssigneeSelect } from './task-assignee-select';
 import { TaskPriorityBadge } from './task-priority-badge';
 import { TaskStatusSelect } from './task-status-select';
 
@@ -85,6 +86,8 @@ export function TaskView({ projectId, taskId }: TaskViewProps) {
             </h2>
             <TaskPriorityBadge priority={task.priority} />
           </div>
+
+          <TaskAssigneeSelect task={task} projectId={projectId} />
 
           <div className="space-y-1.5">
             <h2 className="text-[11px] font-medium uppercase tracking-wide text-subtle-foreground">
