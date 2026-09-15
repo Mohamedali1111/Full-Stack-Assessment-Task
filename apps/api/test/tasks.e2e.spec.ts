@@ -9,6 +9,7 @@ import {
   authHeader,
   createOrganization,
   createProject,
+  createTask,
   registerUser,
   type TestUser,
 } from './utils/fixtures';
@@ -112,6 +113,57 @@ describe('Tasks', () => {
       .get(`/projects/${projectId}/tasks`)
       .set('Authorization', authHeader(outsider))
       .expect(403);
+  });
+
+  it('refuses to update task status for someone outside the project', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Keep private project task protected',
+      member.id,
+    );
+
+    const response = await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/status`)
+      .set('Authorization', authHeader(outsider))
+      .send({ status: TaskStatus.IN_PROGRESS });
+
+    const task = await connection.collection('tasks').findOne({
+      _id: new connection.base.Types.ObjectId(taskId),
+    });
+
+    expect({
+      statusCode: response.status,
+      persistedStatus: task?.status,
+    }).toEqual({
+      statusCode: 403,
+      persistedStatus: TaskStatus.TODO,
+    });
+  });
+
+  it('lets a project member update task status', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Move accessible task forward',
+      member.id,
+    );
+
+    const response = await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/status`)
+      .set('Authorization', authHeader(member))
+      .send({ status: TaskStatus.IN_PROGRESS })
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      id: taskId,
+      status: TaskStatus.IN_PROGRESS,
+      key: 'ENG-1',
+    });
   });
 
   it('rejects a task without a usable title', async () => {
