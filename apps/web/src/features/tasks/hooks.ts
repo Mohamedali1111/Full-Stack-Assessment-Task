@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import type {
   Paginated,
   ProjectMemberEntry,
+  TaskActivityEntry,
   TaskDetail,
   TaskStatus,
   TaskSummary,
@@ -13,12 +14,15 @@ import { queryKeys } from '@/lib/query-keys';
 import {
   createTask,
   type CreateTaskPayload,
+  fetchTaskActivity,
   fetchProjectTasks,
   fetchTask,
   updateTaskAssignee,
   type UpdateTaskAssigneePayload,
   updateTaskStatus,
 } from './api';
+
+export const TASK_ACTIVITY_PAGE_SIZE = 10;
 
 export function useProjectTasks(projectId: string) {
   return useQuery<Paginated<TaskSummary>>({
@@ -32,6 +36,18 @@ export function useTask(taskId: string) {
   return useQuery<TaskDetail>({
     queryKey: queryKeys.task(taskId),
     queryFn: () => fetchTask(taskId),
+    enabled: taskId.length > 0,
+  });
+}
+
+export function useTaskActivity(
+  taskId: string,
+  page: number,
+  pageSize: number = TASK_ACTIVITY_PAGE_SIZE,
+) {
+  return useQuery<Paginated<TaskActivityEntry>>({
+    queryKey: queryKeys.taskActivityPage(taskId, page, pageSize),
+    queryFn: () => fetchTaskActivity(taskId, page, pageSize),
     enabled: taskId.length > 0,
   });
 }
@@ -117,8 +133,13 @@ export function useUpdateTaskAssignee(taskId: string, projectId: string) {
       queryClient.setQueryData(queryKeys.projectTasks(projectId), context?.previousProjectTasks);
       toast.error(error.message);
     },
-    onSuccess: (task) => {
+    onSuccess: async (task, _payload, context) => {
       queryClient.setQueryData(queryKeys.task(taskId), task);
+      const previousAssigneeId = context?.previousTask?.assignee?.id ?? null;
+      const nextAssigneeId = task.assignee?.id ?? null;
+      if (!context?.previousTask || previousAssigneeId !== nextAssigneeId) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.taskActivity(taskId) });
+      }
     },
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.projectTasks(projectId) });

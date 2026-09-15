@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { CommentList } from '@/features/comments/components/comment-list';
 import { formatDate } from '@/lib/format';
 import { useTask } from '../hooks';
+import { TaskActivityList } from './task-activity-list';
 import { TaskAssigneeSelect } from './task-assignee-select';
 import { TaskPriorityBadge } from './task-priority-badge';
 import { TaskStatusSelect } from './task-status-select';
@@ -68,6 +69,8 @@ export function TaskView({ projectId, taskId }: TaskViewProps) {
               </p>
             )}
           </section>
+
+          <TaskActivityList taskId={taskId} />
 
           <CommentList taskId={taskId} />
         </div>
