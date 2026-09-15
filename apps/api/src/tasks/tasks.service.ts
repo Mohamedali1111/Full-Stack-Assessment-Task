@@ -58,8 +58,7 @@ export class TasksService {
   ): Promise<TaskDetail> {
     const { project } = await this.projectAccessService.assertCanView(projectId, userId);
 
-    const taskCount = await this.taskModel.countDocuments({ projectId });
-    const number = taskCount + 1;
+    const number = await this.reserveTaskNumber(projectId);
 
     const task = await this.taskModel.create({
       projectId,
@@ -140,6 +139,58 @@ export class TasksService {
       throw new NotFoundException('Task not found');
     }
     return task;
+  }
+
+  private async reserveTaskNumber(projectId: Types.ObjectId): Promise<number> {
+    const initializedProject = await this.projectModel
+      .findOneAndUpdate(
+        { _id: projectId, lastTaskNumber: { $type: 'number' } },
+        { $inc: { lastTaskNumber: 1 } },
+        { new: true },
+      )
+      .select('lastTaskNumber')
+      .exec();
+
+    if (initializedProject) {
+      if (initializedProject.lastTaskNumber === undefined) {
+        throw new NotFoundException('Project not found');
+      }
+      return initializedProject.lastTaskNumber;
+    }
+
+    const latestTask = await this.taskModel
+      .findOne({ projectId })
+      .sort({ number: -1 })
+      .select('number')
+      .lean()
+      .exec();
+    const existingMax = latestTask?.number ?? 0;
+
+    const initializedFromExistingTasks = await this.projectModel
+      .findOneAndUpdate(
+        { _id: projectId },
+        [
+          {
+            $set: {
+              lastTaskNumber: {
+                $add: [{ $max: [{ $ifNull: ['$lastTaskNumber', existingMax] }, existingMax] }, 1],
+              },
+            },
+          },
+        ],
+        { new: true },
+      )
+      .select('lastTaskNumber')
+      .exec();
+
+    if (!initializedFromExistingTasks) {
+      throw new NotFoundException('Project not found');
+    }
+    if (initializedFromExistingTasks.lastTaskNumber === undefined) {
+      throw new NotFoundException('Project not found');
+    }
+
+    return initializedFromExistingTasks.lastTaskNumber;
   }
 
   private async toSummaries(tasks: TaskDocument[]): Promise<TaskSummary[]> {

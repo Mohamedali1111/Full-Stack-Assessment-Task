@@ -102,6 +102,7 @@ async function seed(): Promise<void> {
       key: 'ENG',
       description: 'Core internal tooling used by the engineering and delivery teams.',
       createdBy: ammar,
+      lastTaskNumber: 6,
     },
     {
       organizationId: organization._id,
@@ -109,6 +110,7 @@ async function seed(): Promise<void> {
       key: 'WEB',
       description: 'Customer-facing portal for account management and billing.',
       createdBy: sarah,
+      lastTaskNumber: 3,
     },
   ]);
 

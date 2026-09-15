@@ -137,6 +137,7 @@ export class ProjectsService {
       key,
       description: dto.description ?? null,
       createdBy: userId,
+      lastTaskNumber: 0,
     });
 
     await this.projectMembersService.add(project._id, userId, ProjectRole.PROJECT_MANAGER);

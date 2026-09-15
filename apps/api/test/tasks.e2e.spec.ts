@@ -21,6 +21,7 @@ describe('Tasks', () => {
   let owner: TestUser;
   let member: TestUser;
   let outsider: TestUser;
+  let organizationId: string;
   let projectId: string;
 
   beforeAll(async () => {
@@ -38,7 +39,7 @@ describe('Tasks', () => {
     member = await registerUser(app, 'Magd Ali', 'magd@example.com');
     outsider = await registerUser(app, 'Outside User', 'outside@example.com');
 
-    const organizationId = await createOrganization(
+    organizationId = await createOrganization(
       connection,
       'Acme Software',
       'acme-software',
@@ -98,6 +99,189 @@ describe('Tasks', () => {
       'ENG-2',
       'ENG-3',
     ]);
+  });
+
+  it('keeps task numbers and keys unique when tasks are created concurrently', async () => {
+    const requestCount = 12;
+
+    const responses = await Promise.all(
+      Array.from({ length: requestCount }, (_value, index) =>
+        request(app.getHttpServer())
+          .post(`/projects/${projectId}/tasks`)
+          .set('Authorization', authHeader(member))
+          .send({ title: `Concurrent task ${index + 1}` })
+          .expect(201),
+      ),
+    );
+
+    const created = responses.map((response) => response.body as { number: number; key: string });
+    const createdNumbers = created.map((task) => task.number);
+    const createdKeys = created.map((task) => task.key);
+
+    const persisted = await connection
+      .collection('tasks')
+      .find({ projectId: new connection.base.Types.ObjectId(projectId) })
+      .project<{ number: number; key: string }>({ number: 1, key: 1, _id: 0 })
+      .toArray();
+    const persistedNumbers = persisted.map((task) => task.number);
+    const persistedKeys = persisted.map((task) => task.key);
+
+    expect({
+      duplicateCreatedNumbers: duplicatesOf(createdNumbers),
+      duplicateCreatedKeys: duplicatesOf(createdKeys),
+      duplicatePersistedNumbers: duplicatesOf(persistedNumbers),
+      duplicatePersistedKeys: duplicatesOf(persistedKeys),
+      createdNumbers,
+      createdKeys,
+      persistedNumbers,
+      persistedKeys,
+    }).toEqual({
+      duplicateCreatedNumbers: [],
+      duplicateCreatedKeys: [],
+      duplicatePersistedNumbers: [],
+      duplicatePersistedKeys: [],
+      createdNumbers,
+      createdKeys,
+      persistedNumbers,
+      persistedKeys,
+    });
+  });
+
+  it('keeps task numbers and keys unique for normally created projects with initialized counters', async () => {
+    const projectResponse = await request(app.getHttpServer())
+      .post('/projects')
+      .set('Authorization', authHeader(owner))
+      .send({
+        organizationId,
+        name: 'API Platform',
+        key: 'API',
+      })
+      .expect(201);
+
+    const createdProjectId = projectResponse.body.id as string;
+    const initializedProject = await connection.collection('projects').findOne({
+      _id: new connection.base.Types.ObjectId(createdProjectId),
+    });
+    expect(initializedProject?.lastTaskNumber).toBe(0);
+
+    const requestCount = 12;
+    const responses = await Promise.all(
+      Array.from({ length: requestCount }, (_value, index) =>
+        request(app.getHttpServer())
+          .post(`/projects/${createdProjectId}/tasks`)
+          .set('Authorization', authHeader(owner))
+          .send({ title: `Initialized counter task ${index + 1}` })
+          .expect(201),
+      ),
+    );
+
+    const created = responses.map((response) => response.body as { number: number; key: string });
+    const createdNumbers = created.map((task) => task.number);
+    const createdKeys = created.map((task) => task.key);
+
+    const persisted = await connection
+      .collection('tasks')
+      .find({ projectId: new connection.base.Types.ObjectId(createdProjectId) })
+      .project<{ number: number; key: string }>({ number: 1, key: 1, _id: 0 })
+      .toArray();
+    const persistedNumbers = persisted.map((task) => task.number);
+    const persistedKeys = persisted.map((task) => task.key);
+
+    expect({
+      duplicateCreatedNumbers: duplicatesOf(createdNumbers),
+      duplicateCreatedKeys: duplicatesOf(createdKeys),
+      duplicatePersistedNumbers: duplicatesOf(persistedNumbers),
+      duplicatePersistedKeys: duplicatesOf(persistedKeys),
+      finalProjectCounter: (
+        await connection.collection('projects').findOne({
+          _id: new connection.base.Types.ObjectId(createdProjectId),
+        })
+      )?.lastTaskNumber,
+    }).toEqual({
+      duplicateCreatedNumbers: [],
+      duplicateCreatedKeys: [],
+      duplicatePersistedNumbers: [],
+      duplicatePersistedKeys: [],
+      finalProjectCounter: requestCount,
+    });
+  });
+
+  it('continues numbering from existing tasks when a legacy project has no counter', async () => {
+    await createTask(connection, projectId, 'ENG', 5, 'Existing legacy task', member.id);
+
+    const requestCount = 4;
+    const responses = await Promise.all(
+      Array.from({ length: requestCount }, (_value, index) =>
+        request(app.getHttpServer())
+          .post(`/projects/${projectId}/tasks`)
+          .set('Authorization', authHeader(member))
+          .send({ title: `Legacy concurrent task ${index + 1}` })
+          .expect(201),
+      ),
+    );
+
+    const created = responses
+      .map((response) => response.body as { number: number; key: string })
+      .sort((left, right) => left.number - right.number)
+      .map((task) => ({ number: task.number, key: task.key }));
+
+    expect(created).toEqual([
+      { number: 6, key: 'ENG-6' },
+      { number: 7, key: 'ENG-7' },
+      { number: 8, key: 'ENG-8' },
+      { number: 9, key: 'ENG-9' },
+    ]);
+  });
+
+  it('does not persist a zero counter when a legacy project is hydrated and saved', async () => {
+    await createTask(connection, projectId, 'ENG', 5, 'Existing legacy task', member.id);
+
+    const ProjectModel = connection.model('Project');
+    const project = await ProjectModel.findById(projectId).exec();
+    expect(project).not.toBeNull();
+
+    project!.set('description', 'Updated without touching task numbering');
+    await project!.save();
+
+    const savedProject = await connection.collection('projects').findOne({
+      _id: new connection.base.Types.ObjectId(projectId),
+    });
+    expect(Object.prototype.hasOwnProperty.call(savedProject, 'lastTaskNumber')).toBe(false);
+
+    const response = await request(app.getHttpServer())
+      .post(`/projects/${projectId}/tasks`)
+      .set('Authorization', authHeader(member))
+      .send({ title: 'Task after legacy project save' })
+      .expect(201);
+
+    expect(response.body).toMatchObject({
+      number: 6,
+      key: 'ENG-6',
+    });
+  });
+
+  it('does not reuse a task number after a task is deleted', async () => {
+    const first = await request(app.getHttpServer())
+      .post(`/projects/${projectId}/tasks`)
+      .set('Authorization', authHeader(member))
+      .send({ title: 'Temporary task' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .delete(`/tasks/${first.body.id}`)
+      .set('Authorization', authHeader(owner))
+      .expect(204);
+
+    const second = await request(app.getHttpServer())
+      .post(`/projects/${projectId}/tasks`)
+      .set('Authorization', authHeader(member))
+      .send({ title: 'Task after deletion' })
+      .expect(201);
+
+    expect(second.body).toMatchObject({
+      number: 2,
+      key: 'ENG-2',
+    });
   });
 
   it('refuses to create a task for someone outside the project', async () => {
@@ -199,3 +383,7 @@ describe('Tasks', () => {
     expect(response.body.items[0]).toMatchObject({ title: 'Work in flight' });
   });
 });
+
+function duplicatesOf<T>(values: T[]): T[] {
+  return Array.from(new Set(values.filter((value, index) => values.indexOf(value) !== index)));
+}
