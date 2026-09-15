@@ -4,6 +4,7 @@ import { Comment, CommentSchema } from '../comments/schemas/comment.schema';
 import { ProjectMembersModule } from '../project-members/project-members.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { UsersModule } from '../users/users.module';
+import { TaskActivity, TaskActivitySchema } from './schemas/task-activity.schema';
 import { Task, TaskSchema } from './schemas/task.schema';
 import { TasksController } from './tasks.controller';
 import { TasksService } from './tasks.service';
@@ -12,6 +13,7 @@ import { TasksService } from './tasks.service';
   imports: [
     MongooseModule.forFeature([
       { name: Task.name, schema: TaskSchema },
+      { name: TaskActivity.name, schema: TaskActivitySchema },
       { name: Comment.name, schema: CommentSchema },
     ]),
     ProjectMembersModule,

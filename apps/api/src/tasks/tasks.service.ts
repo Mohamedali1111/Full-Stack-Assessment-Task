@@ -1,7 +1,12 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { type FilterQuery, Model, Types } from 'mongoose';
-import type { Paginated, TaskDetail, TaskSummary } from '@projectflow/shared';
+import type { Paginated, TaskActivityEntry, TaskDetail, TaskSummary } from '@projectflow/shared';
 import { toUserSummary } from '../common/utils/serialize';
 import { Comment, type CommentDocument } from '../comments/schemas/comment.schema';
 import { ProjectMembersService } from '../project-members/project-members.service';
@@ -9,10 +14,16 @@ import { canManage, ProjectAccessService } from '../projects/project-access.serv
 import { Project, type ProjectDocument } from '../projects/schemas/project.schema';
 import { UsersService } from '../users/users.service';
 import type { CreateTaskDto } from './dto/create-task.dto';
+import type { ListTaskActivityQueryDto } from './dto/list-task-activity.dto';
 import type { ListTasksQueryDto } from './dto/list-tasks.dto';
 import type { UpdateTaskAssigneeDto } from './dto/update-task-assignee.dto';
 import type { UpdateTaskDto } from './dto/update-task.dto';
 import type { UpdateTaskStatusDto } from './dto/update-task-status.dto';
+import {
+  TaskActivity,
+  type TaskActivityDocument,
+  TaskActivityType,
+} from './schemas/task-activity.schema';
 import { Task, type TaskDocument } from './schemas/task.schema';
 
 @Injectable()
@@ -21,6 +32,8 @@ export class TasksService {
     @InjectModel(Task.name) private readonly taskModel: Model<TaskDocument>,
     @InjectModel(Project.name) private readonly projectModel: Model<ProjectDocument>,
     @InjectModel(Comment.name) private readonly commentModel: Model<CommentDocument>,
+    @InjectModel(TaskActivity.name)
+    private readonly taskActivityModel: Model<TaskActivityDocument>,
     private readonly projectAccessService: ProjectAccessService,
     private readonly projectMembersService: ProjectMembersService,
     private readonly usersService: UsersService,
@@ -84,6 +97,33 @@ export class TasksService {
     return this.toDetail(task, project);
   }
 
+  async findActivity(
+    taskId: Types.ObjectId,
+    userId: Types.ObjectId,
+    query: ListTaskActivityQueryDto,
+  ): Promise<Paginated<TaskActivityEntry>> {
+    const task = await this.findTaskOrFail(taskId);
+    await this.projectAccessService.assertCanView(task.projectId, userId);
+
+    const filter = { taskId };
+    const [activities, total] = await Promise.all([
+      this.taskActivityModel
+        .find(filter)
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(query.skip)
+        .limit(query.pageSize)
+        .exec(),
+      this.taskActivityModel.countDocuments(filter),
+    ]);
+
+    return {
+      items: await this.toActivityEntries(activities),
+      total,
+      page: query.page,
+      pageSize: query.pageSize,
+    };
+  }
+
   async update(
     taskId: Types.ObjectId,
     userId: Types.ObjectId,
@@ -141,8 +181,13 @@ export class TasksService {
       if (!canManage(access)) {
         throw new ForbiddenException('You do not have permission to unassign this task');
       }
+      const previousAssigneeId = task.assigneeId ?? null;
+      if (!previousAssigneeId) {
+        return this.toDetail(task, access.project);
+      }
       task.assigneeId = null;
       await task.save();
+      await this.recordAssigneeChanged(task, userId, previousAssigneeId, null);
       return this.toDetail(task, access.project);
     }
 
@@ -157,8 +202,14 @@ export class TasksService {
       throw new ForbiddenException('You do not have permission to assign this task');
     }
 
+    const previousAssigneeId = task.assigneeId ?? null;
+    if (previousAssigneeId?.equals(assigneeId)) {
+      return this.toDetail(task, access.project);
+    }
+
     task.assigneeId = assigneeId;
     await task.save();
+    await this.recordAssigneeChanged(task, userId, previousAssigneeId, assigneeId);
 
     return this.toDetail(task, access.project);
   }
@@ -176,6 +227,21 @@ export class TasksService {
       throw new NotFoundException('Task not found');
     }
     return task;
+  }
+
+  private recordAssigneeChanged(
+    task: TaskDocument,
+    actorId: Types.ObjectId,
+    from: Types.ObjectId | null,
+    to: Types.ObjectId | null,
+  ): Promise<TaskActivityDocument> {
+    return this.taskActivityModel.create({
+      taskId: task._id,
+      projectId: task.projectId,
+      actorId,
+      type: TaskActivityType.ASSIGNEE_CHANGED,
+      metadata: { from, to },
+    });
   }
 
   private async reserveTaskNumber(projectId: Types.ObjectId): Promise<number> {
@@ -269,6 +335,41 @@ export class TasksService {
       createdAt: task.createdAt.toISOString(),
       updatedAt: task.updatedAt.toISOString(),
     }));
+  }
+
+  private async toActivityEntries(
+    activities: TaskActivityDocument[],
+  ): Promise<TaskActivityEntry[]> {
+    if (activities.length === 0) {
+      return [];
+    }
+
+    const userIds = activities.flatMap((activity) => [
+      activity.actorId,
+      ...(activity.metadata.from ? [activity.metadata.from] : []),
+      ...(activity.metadata.to ? [activity.metadata.to] : []),
+    ]);
+    const users = await this.usersService.findManyByIds(userIds);
+    const usersById = new Map(users.map((user) => [user._id.toString(), user]));
+
+    return activities.map((activity) => {
+      const fromId = activity.metadata.from?.toString() ?? null;
+      const toId = activity.metadata.to?.toString() ?? null;
+
+      return {
+        id: activity._id.toString(),
+        taskId: activity.taskId.toString(),
+        type: activity.type,
+        actor: toCreatorSummary(usersById.get(activity.actorId.toString())),
+        from: fromId ? toAssigneeSummary(usersById.get(fromId)) : null,
+        to: toId ? toAssigneeSummary(usersById.get(toId)) : null,
+        metadata: {
+          from: fromId,
+          to: toId,
+        },
+        createdAt: activity.createdAt.toISOString(),
+      };
+    });
   }
 
   private async toDetail(task: TaskDocument, project?: ProjectDocument): Promise<TaskDetail> {

@@ -631,6 +631,224 @@ describe('Tasks', () => {
     expect(task?.assigneeId?.toString()).toBe(assignee.id);
   });
 
+  it('records activity when a task moves from unassigned to assigned', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Activity assignment task',
+      member.id,
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(projectManager))
+      .send({ assigneeId: assignee.id })
+      .expect(200);
+
+    const response = await request(app.getHttpServer())
+      .get(`/tasks/${taskId}/activity`)
+      .set('Authorization', authHeader(member))
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      total: 1,
+      page: 1,
+      pageSize: expect.any(Number),
+      items: [
+        {
+          type: 'TASK_ASSIGNEE_CHANGED',
+          taskId,
+          actor: { id: projectManager.id, email: projectManager.email },
+          metadata: { from: null, to: assignee.id },
+          createdAt: expect.any(String),
+        },
+      ],
+    });
+  });
+
+  it('records newest-first activity when a task is reassigned to a different user', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Activity reassignment task',
+      member.id,
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(projectManager))
+      .send({ assigneeId: member.id })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(projectManager))
+      .send({ assigneeId: assignee.id })
+      .expect(200);
+
+    const response = await request(app.getHttpServer())
+      .get(`/tasks/${taskId}/activity`)
+      .set('Authorization', authHeader(member))
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      total: 2,
+      items: [
+        {
+          type: 'TASK_ASSIGNEE_CHANGED',
+          metadata: { from: member.id, to: assignee.id },
+          actor: { id: projectManager.id },
+        },
+        {
+          type: 'TASK_ASSIGNEE_CHANGED',
+          metadata: { from: null, to: member.id },
+          actor: { id: projectManager.id },
+        },
+      ],
+    });
+  });
+
+  it('records activity when an assigned task is unassigned', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Activity unassignment task',
+      member.id,
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(projectManager))
+      .send({ assigneeId: assignee.id })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(projectManager))
+      .send({ assigneeId: null })
+      .expect(200);
+
+    const response = await request(app.getHttpServer())
+      .get(`/tasks/${taskId}/activity`)
+      .set('Authorization', authHeader(member))
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      total: 2,
+    });
+    expect(response.body.items[0]).toMatchObject({
+      type: 'TASK_ASSIGNEE_CHANGED',
+      metadata: { from: assignee.id, to: null },
+      actor: { id: projectManager.id },
+    });
+  });
+
+  it('does not record activity when assigning the same assignee again', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Same-assignee activity task',
+      member.id,
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(projectManager))
+      .send({ assigneeId: assignee.id })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/tasks/${taskId}/assignee`)
+      .set('Authorization', authHeader(projectManager))
+      .send({ assigneeId: assignee.id })
+      .expect(200);
+
+    const response = await request(app.getHttpServer())
+      .get(`/tasks/${taskId}/activity`)
+      .set('Authorization', authHeader(member))
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      total: 1,
+      items: [
+        {
+          type: 'TASK_ASSIGNEE_CHANGED',
+          metadata: { from: null, to: assignee.id },
+        },
+      ],
+    });
+  });
+
+  it('refuses to show task activity to someone outside the project', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Private activity task',
+      member.id,
+    );
+
+    await request(app.getHttpServer())
+      .get(`/tasks/${taskId}/activity`)
+      .set('Authorization', authHeader(outsider))
+      .expect(403);
+  });
+
+  it('paginates task activity newest first', async () => {
+    const taskId = await createTask(
+      connection,
+      projectId,
+      'ENG',
+      1,
+      'Paginated activity task',
+      member.id,
+    );
+
+    for (const assigneeId of [member.id, assignee.id, null, member.id, assignee.id]) {
+      await request(app.getHttpServer())
+        .patch(`/tasks/${taskId}/assignee`)
+        .set('Authorization', authHeader(projectManager))
+        .send({ assigneeId })
+        .expect(200);
+    }
+
+    const firstPage = await request(app.getHttpServer())
+      .get(`/tasks/${taskId}/activity`)
+      .query({ page: 1, pageSize: 2 })
+      .set('Authorization', authHeader(member))
+      .expect(200);
+    const secondPage = await request(app.getHttpServer())
+      .get(`/tasks/${taskId}/activity`)
+      .query({ page: 2, pageSize: 2 })
+      .set('Authorization', authHeader(member))
+      .expect(200);
+
+    expect(firstPage.body).toMatchObject({
+      total: 5,
+      page: 1,
+      pageSize: 2,
+      items: [
+        { metadata: { from: member.id, to: assignee.id } },
+        { metadata: { from: null, to: member.id } },
+      ],
+    });
+    expect(secondPage.body).toMatchObject({
+      total: 5,
+      page: 2,
+      pageSize: 2,
+      items: [
+        { metadata: { from: assignee.id, to: null } },
+        { metadata: { from: member.id, to: assignee.id } },
+      ],
+    });
+  });
+
   it('rejects a task without a usable title', async () => {
     const response = await request(app.getHttpServer())
       .post(`/projects/${projectId}/tasks`)
