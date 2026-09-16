@@ -22,9 +22,9 @@ export function validateEnvironment(config: Record<string, unknown>): AppEnviron
     );
   }
 
-  const port = Number(config.API_PORT ?? 4732);
+  const port = resolvePort(config.PORT, config.API_PORT);
   if (!Number.isInteger(port) || port <= 0) {
-    throw new Error('API_PORT must be a positive integer');
+    throw new Error('PORT/API_PORT must be a positive integer');
   }
 
   return {
@@ -35,4 +35,13 @@ export function validateEnvironment(config: Record<string, unknown>): AppEnviron
     API_PORT: port,
     WEB_ORIGIN: String(config.WEB_ORIGIN ?? 'http://localhost:3742'),
   };
+}
+
+function resolvePort(port: unknown, apiPort: unknown): number {
+  const configuredPort = firstNonBlank(port, apiPort);
+  return Number(configuredPort ?? 4732);
+}
+
+function firstNonBlank(...values: unknown[]): unknown {
+  return values.find((value) => typeof value !== 'string' || value.trim().length > 0);
 }

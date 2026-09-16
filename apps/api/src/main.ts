@@ -26,7 +26,7 @@ async function bootstrap(): Promise<void> {
   const port = configService.get<number>('API_PORT') ?? 4732;
   await app.listen(port);
 
-  new Logger('Bootstrap').log(`ProjectFlow API listening on http://localhost:${port}`);
+  new Logger('Bootstrap').log(`ProjectFlow API listening on port ${port}`);
 }
 
 void bootstrap();
