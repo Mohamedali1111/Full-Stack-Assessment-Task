@@ -1,267 +1,151 @@
 # ProjectFlow
 
-ProjectFlow is a lightweight project and task tracker for software teams.
-Organizations own projects, projects own tasks, and tasks carry a status, a
-priority and a discussion thread.
+## Overview
 
-It is a TypeScript monorepo: a NestJS + MongoDB API and a Next.js App Router
-frontend, sharing a small package of domain types and enums.
+ProjectFlow is a lightweight project and task tracker for software teams. Organizations own projects, projects own tasks, and tasks carry status, priority, creator, assignee, comments, and assignment activity history.
 
----
+This assessment extension adds task assignment, assignee-change activity history, concurrency-safe project task numbering, and a fix for a task status authorization bug while staying inside the existing architecture.
 
-## Technology stack
+## Tech Stack
 
-| Area         | Choice                                           |
-| ------------ | ------------------------------------------------ |
-| Monorepo     | pnpm workspaces + Turborepo                      |
-| Language     | TypeScript 5.9                                   |
-| API          | NestJS 11, Mongoose 8, MongoDB                   |
-| Auth         | JWT bearer tokens, bcrypt password hashing       |
-| Web          | Next.js 16 (App Router), React 19                |
-| Styling      | Tailwind CSS 4, Radix primitives, Phosphor Icons |
-| Server state | TanStack Query 5                                 |
-| Forms        | React Hook Form + Zod                            |
-| Testing      | Jest, Supertest, mongodb-memory-server           |
-
----
+- pnpm workspaces and Turborepo monorepo
+- NestJS API
+- MongoDB with Mongoose
+- Next.js App Router
+- React
+- TanStack Query
+- Shared TypeScript package for API contracts and domain enums
+- Jest, Supertest, and mongodb-memory-server for API tests
 
 ## Prerequisites
 
-- **Node.js 20.19+** (22 or 24 recommended)
-- **pnpm 10+** — `npm install -g pnpm`
-- **MongoDB 7+** running locally
+- Node.js `>=20.19` as declared in the root `package.json`
+- pnpm `10.33.0` as declared by `packageManager`
+- MongoDB reachable through `MONGODB_URI` for local development and seeding
 
-On macOS:
+The API e2e tests use `mongodb-memory-server`; they do not require a separately running local MongoDB.
 
-```bash
-brew tap mongodb/brew
-brew install mongodb-community@7.0
-brew services start mongodb-community@7.0
-```
+## Setup
 
-Any reachable MongoDB works — point `MONGODB_URI` wherever you like.
-
----
-
-## Installation
+From a clean checkout:
 
 ```bash
 pnpm install
-```
-
-## Environment setup
-
-Configuration lives in a single `.env` file at the repository root; both apps
-read it.
-
-```bash
 cp .env.example .env
-```
-
-| Variable              | Purpose                          | Default                                 |
-| --------------------- | -------------------------------- | --------------------------------------- |
-| `MONGODB_URI`         | MongoDB connection string        | `mongodb://127.0.0.1:27017/projectflow` |
-| `JWT_SECRET`          | Signing secret for access tokens | — (required)                            |
-| `JWT_EXPIRES_IN`      | Access token lifetime            | `7d`                                    |
-| `API_PORT`            | Port the API listens on          | `4732`                                  |
-| `WEB_ORIGIN`          | Origin allowed by CORS           | `http://localhost:3742`                 |
-| `NEXT_PUBLIC_API_URL` | API base URL used by the browser | `http://localhost:4732`                 |
-
-The API refuses to boot if `MONGODB_URI` or `JWT_SECRET` is missing.
-
-## Database
-
-Make sure MongoDB is running, then load development data:
-
-```bash
+pnpm build
 pnpm seed
 ```
 
-The seed is repeatable — it clears the ProjectFlow collections and reinserts a
-fresh organization, users, projects, tasks and comments.
+The seed command runs the API seed script through Turborepo and depends on the API build output.
 
-## Running the apps
+On Windows PowerShell, the current web dev script uses Unix shell default-variable syntax:
+
+```bash
+next dev --port ${WEB_PORT:-3742}
+```
+
+If that does not execute correctly in PowerShell, run the web app directly with an explicit port:
+
+```bash
+pnpm --filter @projectflow/web exec next dev --port 3742
+```
+
+This is an existing development-script portability limitation, not part of the assessment feature work.
+
+## Environment Variables
+
+Create `.env` from `.env.example`. Do not commit real secrets.
+
+| Variable | Purpose | Example from `.env.example` |
+| --- | --- | --- |
+| `MONGODB_URI` | MongoDB connection string | `mongodb://127.0.0.1:27017/projectflow` |
+| `JWT_SECRET` | JWT signing secret | development/local environments may use a placeholder; non-local environments must provide a real strong secret |
+| `JWT_EXPIRES_IN` | JWT lifetime | `7d` |
+| `API_PORT` | API port | `4732` |
+| `WEB_ORIGIN` | CORS origin for the web app | `http://localhost:3742` |
+| `NEXT_PUBLIC_API_URL` | Browser API base URL | `http://localhost:4732` |
+
+## Running the App
+
+Run both apps with the normal workspace command:
 
 ```bash
 pnpm dev
 ```
 
-- Web — <http://localhost:3742>
-- API — <http://localhost:4732>
+Expected local URLs with the checked-in example environment:
 
-Both apps deliberately avoid the usual 3000/4000 defaults so they do not clash
-with other projects. To move the web app, set `WEB_PORT` in your shell and
-update `WEB_ORIGIN` in `.env` to match, so CORS keeps working:
+- Web: <http://localhost:3742>
+- API: <http://localhost:4732>
 
-```bash
-WEB_PORT=3800 pnpm --filter @projectflow/web dev
-```
-
-The API port comes from `API_PORT` in `.env`; change `NEXT_PUBLIC_API_URL` to
-match if you move it.
-
-Run one at a time if you prefer:
+You can also run apps separately:
 
 ```bash
 pnpm --filter @projectflow/api dev
 pnpm --filter @projectflow/web dev
 ```
 
-## From a clean checkout
+On Windows PowerShell, prefer the explicit web command shown in Setup if the default web script cannot parse the port expression.
+
+## Seed Accounts
+
+The development seed defines fixture/demo accounts. All seeded accounts use:
+
+```text
+Password123!
+```
+
+| Name | Email | Role / access |
+| --- | --- | --- |
+| Ammar Yaser | `ammar@example.com` | Organization `OWNER` |
+| Sarah Ahmed | `sarah@example.com` | Organization `ADMIN`; project manager on `WEB` |
+| Ahmed Hassan | `ahmed@example.com` | Organization `MEMBER`; `PROJECT_MANAGER` on `ENG` |
+| Magd Ali | `magd@example.com` | Organization `MEMBER`; member of `ENG` and `WEB` |
+| Outside User | `outside@example.com` | No organization/project access |
+
+Seeded projects include `Internal Platform` (`ENG`) and `Customer Portal` (`WEB`) with tasks such as `ENG-1` and `WEB-1`.
+
+## Running Tests
+
+Workspace commands:
 
 ```bash
-pnpm install
-cp .env.example .env
-pnpm seed
-pnpm dev
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm build
 ```
 
----
+Focused API commands used during the assessment:
 
-## Commands
-
-| Command          | Description                                |
-| ---------------- | ------------------------------------------ |
-| `pnpm dev`       | Run the API and web app in watch mode      |
-| `pnpm build`     | Build every package and app                |
-| `pnpm lint`      | ESLint across the workspace                |
-| `pnpm typecheck` | TypeScript project-wide, no emit           |
-| `pnpm test`      | API test suite (uses an in-memory MongoDB) |
-| `pnpm seed`      | Reset and reload development data          |
-| `pnpm format`    | Prettier write                             |
-
-`pnpm test` does not need a running MongoDB — it starts a throwaway in-memory
-server for the duration of the run. The first run downloads a MongoDB binary
-(around 100 MB) and caches it.
-
----
-
-## Development credentials
-
-Seeded accounts, all sharing the password `Password123!`:
-
-| Name         | Email                 | Access                    |
-| ------------ | --------------------- | ------------------------- |
-| Ammar Yaser  | `ammar@example.com`   | Organization owner        |
-| Sarah Ahmed  | `sarah@example.com`   | Organization admin        |
-| Ahmed Hassan | `ahmed@example.com`   | Project manager on `ENG`  |
-| Magd Ali     | `magd@example.com`    | Member of `ENG` and `WEB` |
-| Outside User | `outside@example.com` | No organization           |
-
-These are local development accounts only.
-
----
-
-## Architecture
-
-```
-projectflow/
-├── apps/
-│   ├── api/                     NestJS API
-│   │   ├── src/
-│   │   │   ├── auth/            register / login / current user
-│   │   │   ├── users/
-│   │   │   ├── organizations/
-│   │   │   ├── organization-members/
-│   │   │   ├── projects/        projects + ProjectAccessService
-│   │   │   ├── project-members/
-│   │   │   ├── tasks/
-│   │   │   ├── comments/
-│   │   │   ├── common/          guards, decorators, filters, shared DTOs
-│   │   │   └── database/seed.ts
-│   │   └── test/                e2e suites and fixtures
-│   │
-│   └── web/                     Next.js App Router frontend
-│       └── src/
-│           ├── app/             routes and layouts
-│           ├── components/      design system primitives + app shell
-│           ├── features/        auth, projects, tasks, comments
-│           ├── lib/             API client, query keys, formatting
-│           └── providers/       TanStack Query provider
-│
-└── packages/
-    ├── shared/                  enums, constants, API response types
-    ├── eslint-config/           flat ESLint configs
-    └── tsconfig/                base TypeScript configs
+```bash
+pnpm --filter @projectflow/api test
+pnpm --filter @projectflow/api test -- tasks.e2e.spec.ts
+pnpm --filter @projectflow/api typecheck
+pnpm --filter @projectflow/shared typecheck
+pnpm --filter @projectflow/web typecheck
+pnpm --filter @projectflow/web lint
+pnpm --filter @projectflow/web build
 ```
 
-### API layering
+There is no existing frontend automated test framework in this repository.
 
-Each module follows the same shape: controller → service → Mongoose model, with
-DTOs validating input at the boundary. Controllers stay thin; business rules
-live in services.
+## Technical Decisions
 
-### Domain model
+- Task assignment uses a dedicated `PATCH /tasks/:taskId/assignee` endpoint rather than overloading generic task update.
+- Assignable users must be explicit members of the task's project; organization membership alone is not enough.
+- The frontend assignment control uses optimistic TanStack Query updates with rollback and server reconciliation.
+- Assignment history is stored in a separate `TaskActivity` collection rather than an embedded task array.
+- Activity pagination uses the repository-standard `page` / `pageSize` contract.
+- Activity ordering is deterministic with `createdAt` plus `_id` descending.
+- Project task numbers are allocated through a project-owned atomic counter.
+- `{ projectId, number }` has a unique index as database defense in depth.
 
-```
-User
-Organization        ── OrganizationMember ── User      (OWNER | ADMIN | MEMBER)
-Organization  ── Project
-Project             ── ProjectMember      ── User      (PROJECT_MANAGER | MEMBER)
-Project       ── Task ── Comment
-```
+## Known Limitations
 
-Membership is stored in its own collection rather than as arrays on the parent
-document, so it can be indexed and queried directly. Both membership
-collections carry a unique compound index on their two foreign keys.
-
-Tasks are numbered per project and identified by a human-readable key derived
-from the project key: `ENG-1`, `ENG-2`, `WEB-1`.
-
-### Authorization
-
-`ProjectAccessService` answers "may this user touch this project?" in one
-place. Access comes from either an elevated organization role (`OWNER` or
-`ADMIN`, which grants access to every project in the organization) or an
-explicit project membership row. `assertCanView` gates reads, `assertCanManage`
-gates configuration and membership changes.
-
-Authentication is a JWT bearer token. `JwtAuthGuard` is registered globally;
-routes opt out with the `@Public()` decorator.
-
-### API surface
-
-```
-POST   /auth/register
-POST   /auth/login
-GET    /auth/me
-
-GET    /organizations
-
-GET    /projects
-POST   /projects
-GET    /projects/:projectId
-GET    /projects/:projectId/members
-POST   /projects/:projectId/members
-
-GET    /projects/:projectId/tasks
-POST   /projects/:projectId/tasks
-GET    /tasks/:taskId
-PATCH  /tasks/:taskId
-PATCH  /tasks/:taskId/status
-DELETE /tasks/:taskId
-
-GET    /tasks/:taskId/comments
-POST   /tasks/:taskId/comments
-```
-
-Errors share one shape:
-
-```json
-{
-  "statusCode": 403,
-  "message": "You do not have access to this project",
-  "error": "Forbidden"
-}
-```
-
-### Frontend
-
-Routes are thin; the work happens in `features/`. Server state is owned by
-TanStack Query — query keys live in `lib/query-keys.ts` so invalidation stays
-predictable — and local UI state stays in React. The API client in
-`lib/api-client.ts` centralises the base URL, the auth header and error
-parsing.
-
-Components are server components by default; `"use client"` is added only where
-interactivity or hooks require it.
+- Task assignment update and activity insertion are two separate writes. If the activity insert fails after the task save, the request can fail while the task mutation has already persisted.
+- Activity pagination currently uses offset pagination. Cursor pagination would be a better fit if individual task histories become very deep.
+- The repository does not currently include a frontend automated test framework.
+- The assignee selector is not searchable. A new combobox dependency was not introduced because the repository already has a native Radix Select pattern and seeded project sizes are small.
+- Existing production data may contain duplicate task numbers from the old race. Those duplicates must be detected and resolved, and project counters backfilled, before deploying the unique `{ projectId, number }` index.
+- The web dev script uses Unix shell default-variable syntax and may need the documented direct Next command on Windows PowerShell.
