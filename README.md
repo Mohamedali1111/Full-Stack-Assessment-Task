@@ -6,6 +6,19 @@ ProjectFlow is a lightweight project and task tracker for software teams. Organi
 
 This assessment extension adds task assignment, assignee-change activity history, concurrency-safe project task numbering, and a fix for a task status authorization bug while staying inside the existing architecture.
 
+## Deployment
+
+- GitHub Repository: [https://github.com/Mohamedali1111/Full-Stack-Assessment-Task](https://github.com/Mohamedali1111/Full-Stack-Assessment-Task)
+- Live Demo: [https://full-stack-assessment-task-api-rust.vercel.app/](https://full-stack-assessment-task-api-rust.vercel.app/)
+
+Deployment architecture:
+
+- Frontend: Vercel
+- API: Render
+- Database: MongoDB Atlas
+
+Local development continues to support `API_PORT`. Hosted platforms may provide `PORT`; when present, `PORT` takes precedence over `API_PORT`.
+
 ## Tech Stack
 
 - pnpm workspaces and Turborepo monorepo
